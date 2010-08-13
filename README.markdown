@@ -179,28 +179,28 @@ don't have to touch `ActiveRecord::Base` at all:
     # set up MyMaster's connection as the master database connection for User:
     ActiveReload::ConnectionProxy.setup_for MyMaster, User
 
-## Specifying the default
+#### Specifying the default
 
 If you don't want *all* of your reads to come from the slave database, but instead want to
 slowly turn them up, you can setup the master as the default:
 
-  ActiveReload::ConnectionProxy.setup!(:master)
+    ActiveReload::ConnectionProxy.setup!(:master)
 
 OR
 
-  ActiveReload::ConnectionProxy.setup_for ActiveReload::MasterDatabase, ActiveRecord::Base, :master
+    ActiveReload::ConnectionProxy.setup_for ActiveReload::MasterDatabase, ActiveRecord::Base, :master
 
 You can then use a `with_slave` block to surround queries you want to hit the slave DB:
 
-  class Foo < ActiveRecord::Base
+    class Foo < ActiveRecord::Base
 
-    def all_widgets
-      ActiveRecord::Base.connection.with_slave do
-        widgets.all
+      def all_widgets
+        ActiveRecord::Base.connection.with_slave do
+          widgets.all
+        end
       end
-    end
 
-  end
+    end
 
 ### The controller filter
 
