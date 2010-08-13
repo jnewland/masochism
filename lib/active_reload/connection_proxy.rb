@@ -24,11 +24,11 @@ module ActiveReload
       @slave.retrieve_connection
     end
 
-    def self.setup!
+    def self.setup!(default = nil)
       if slave_defined?
-        setup_for ActiveReload::MasterDatabase, ActiveReload::SlaveDatabase
+        setup_for(ActiveReload::MasterDatabase, ActiveReload::SlaveDatabase, default)
       else
-        setup_for ActiveReload::MasterDatabase
+        setup_for(ActiveReload::MasterDatabase, ActiveRecord::Base, default)
       end
     end
 
@@ -41,8 +41,9 @@ module ActiveReload
       config[Rails.env][key] || config[key]
     end
 
-    def self.setup_for(master, slave = nil)
-      slave ||= ActiveRecord::Base
+    def self.setup_for(master, slave = nil, default = nil)
+      slave   ||= ActiveRecord::Base
+      default ||= :slave
       
       unless slave.respond_to?(:connection_proxy=)
         slave.__send__(:include, ActiveRecordConnectionMethods)
@@ -53,7 +54,9 @@ module ActiveReload
       
       # wire up MasterDatabase and SlaveDatabase
       establish_connections
-      slave.connection_proxy = new(master, slave)
+      proxy                  = new(master, slave)
+      proxy.current_type     = default
+      slave.connection_proxy = proxy
     end
     
     def self.establish_connections
@@ -73,7 +76,7 @@ module ActiveReload
     end
     
     def current_type
-      Thread.current[@thread_key] ||= :slave
+      Thread.current[@thread_key]
     end
     
     def current_type=(type)
@@ -83,6 +86,14 @@ module ActiveReload
     def with_master
       old_type = current_type
       self.current_type = :master
+      yield
+    ensure
+      self.current_type = old_type
+    end
+
+    def with_slave
+      old_type = current_type
+      self.current_type = :slave
       yield
     ensure
       self.current_type = old_type

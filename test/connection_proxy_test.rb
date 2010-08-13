@@ -5,6 +5,7 @@ require 'active_support/test_case'
 require 'active_record'
 require 'active_reload/connection_proxy'
 require 'active_reload/master_filter'
+require 'active_reload/slave_filter'
 
 RAILS_ENV = 'test'
 
@@ -29,8 +30,8 @@ class MasochismTestCase < ActiveSupport::TestCase
     ActiveRecord::Base.connection
   end
   
-  def enable_masochism
-    ActiveReload::ConnectionProxy.setup!
+  def enable_masochism(default = nil)
+    ActiveReload::ConnectionProxy.setup!(default)
   end
   
   def master
@@ -208,5 +209,129 @@ class MasterFilterTest < MasochismTestCase
       yielded = true
     end
     assert yielded
+  end
+end
+
+class SlaveFilterTest < MasochismTestCase
+  setup :prepare
+  
+  def prepare
+    enable_masochism(:master)
+    @controller = mock
+  end
+  
+  def test_yields_in_master_block
+    yielded = false
+    ActiveReload::SlaveFilter.filter(@controller) do
+      assert_equal :slave, connection.current_type
+      yielded = true
+    end
+    assert yielded
+  end
+  
+  def test_doesnt_yield_in_master_without_masochism
+    connection.expects(:masochistic?).returns(false)
+    
+    yielded = false
+    ActiveReload::SlaveFilter.filter(@controller) do
+      assert_equal :master, connection.current_type
+      yielded = true
+    end
+    assert yielded
+  end
+  
+  def test_instance_mode
+    model = mock
+    model.stubs(:connection).returns(connection)
+    
+    yielded = false
+    ActiveReload::SlaveFilter.new(model).filter(@controller) do
+      assert_equal :slave, connection.current_type
+      yielded = true
+    end
+    assert yielded
+  end
+  
+  def test_instance_mode_without_masochism
+    model = mock
+    conn = mock
+    model.stubs(:connection).returns(conn)
+    conn.expects(:masochistic?).returns(false)
+    
+    yielded = false
+    ActiveReload::SlaveFilter.new(model).filter(@controller) do
+      yielded = true
+    end
+    assert yielded
+  end
+end
+
+class MasterDefaultTest < MasochismTestCase
+  setup :place_mocks
+  
+  def place_mocks
+    # this doesn't actually establish any connections,
+    # but we don't need them
+    enable_masochism(:master)
+    @master = mock
+    @slave = mock
+    connection.stubs(:master).returns(@master)
+    connection.stubs(:slave).returns(@slave)
+  end
+  
+  def test_connection_is_a_proxy
+    assert_equal 'ActiveReload::ConnectionProxy', connection.class.name
+  end
+  
+  def test_masochistic
+    assert connection.masochistic?
+  end
+  
+  def test_reads_go_to_master
+    @master.expects(:select_rows).with('SELECT').returns(['bar'])
+    assert_equal ['bar'], connection.select_rows('SELECT')
+  end
+  
+  def test_writes_go_to_master
+    @master.expects(:insert).with('INSERT').returns(1)
+    assert_equal 1, connection.insert('INSERT')
+  end
+  
+  def test_execute_gos_to_master
+    @master.expects(:execute).with('QUERY').returns('result')
+    assert_equal 'result', connection.execute('QUERY')
+  end
+  
+  def test_with_master
+    @master.expects(:select_rows).returns(['foo'])
+    
+    connection.with_master do
+      assert_equal ['foo'], connection.select_rows
+    end
+    @master.expects(:select_rows).returns(['foo'])
+    assert_equal ['foo'], connection.select_rows
+  end
+  
+  def test_with_slave
+    @slave.expects(:select_rows).returns(['foo'])
+    @master.expects(:select_rows).returns(['bar'])
+    
+    connection.with_slave do
+      assert_equal :slave, connection.current_type
+      assert_equal ['foo'], connection.select_rows
+    end
+    assert_equal ['bar'], connection.select_rows
+  end
+  
+  def test_transactions_run_on_master
+    @master.expects(:transaction).with(:foo => 'bar').yields
+    
+    assert_equal :master, connection.current_type
+    
+    ActiveRecord::Base.transaction(:foo => 'bar') do
+      # hardcore transaction stuff
+      assert_equal :master, connection.current_type
+    end
+    assert_equal :master, connection.current_type
   end
 end
